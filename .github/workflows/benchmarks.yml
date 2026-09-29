@@ -59,6 +59,9 @@ jobs:
       - name: Build benchmarks
         run: dotnet build src/Resharp.Benchmarks/Resharp.Benchmarks.csproj --configuration Release --framework net10.0 --no-restore
 
+      - name: Run tests
+        run: dotnet test src/Resharp.Test/Resharp.Test.fsproj --configuration Release --framework net10.0
+
       - name: Run benchmarks
         working-directory: src/Resharp.Benchmarks
         shell: bash
@@ -67,6 +70,8 @@ jobs:
           set -o pipefail
           dotnet run --configuration Release --framework net10.0 --no-build -- --readme \
             2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+          dotnet run --configuration Release --framework net10.0 --no-build -- --adaptive-dfa \
+            2>&1 | tee -a BenchmarkDotNet.Artifacts/ci-console.log
 
       - name: Validate benchmark results
         shell: bash
