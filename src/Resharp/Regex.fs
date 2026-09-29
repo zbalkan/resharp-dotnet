@@ -97,6 +97,109 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
     let mutable _dfaDelta: TState[] =
         Array.zeroCreate ((I.shl options.InitialDfaCapacity _mintermsLog) * 2)
 
+    // Full DFAs are frozen into the narrowest state-id representation that can
+    // hold every constructed state. Lazy construction starts with Int32 and can
+    // safely grow/promote if an unexpected transition creates additional states.
+    let mutable _dfaDelta8: byte[] = null
+    let mutable _dfaDelta16: uint16[] = null
+    let mutable _dfaStateIdWidth = 4uy
+
+    let dfaLengthForStateCapacity(stateCapacity: int) =
+        I.shl stateCapacity _mintermsLog
+
+    let promoteDfaToUInt16(requiredLength: int) =
+        let source = _dfaDelta8
+        let newLength = max requiredLength (max 1 (source.Length * 2))
+        let target = Array.zeroCreate<uint16> newLength
+
+        for i = 0 to source.Length - 1 do
+            target[i] <- uint16 source[i]
+
+        _dfaDelta16 <- target
+        _dfaDelta8 <- null
+        _dfaStateIdWidth <- 2uy
+
+    let promoteDfaToInt32(requiredLength: int) =
+        let sourceLength =
+            if _dfaStateIdWidth = 1uy then _dfaDelta8.Length
+            elif _dfaStateIdWidth = 2uy then _dfaDelta16.Length
+            else _dfaDelta.Length
+
+        let newLength = max requiredLength (max 1 (sourceLength * 2))
+        let target = Array.zeroCreate<TState> newLength
+
+        if _dfaStateIdWidth = 1uy then
+            for i = 0 to _dfaDelta8.Length - 1 do
+                target[i] <- int _dfaDelta8[i]
+        elif _dfaStateIdWidth = 2uy then
+            for i = 0 to _dfaDelta16.Length - 1 do
+                target[i] <- int _dfaDelta16[i]
+        else
+            _dfaDelta.AsSpan().CopyTo(target.AsSpan())
+
+        _dfaDelta <- target
+        _dfaDelta8 <- null
+        _dfaDelta16 <- null
+        _dfaStateIdWidth <- 4uy
+
+    let ensureDfaCapacity(stateCapacity: int) =
+        let requiredLength = dfaLengthForStateCapacity stateCapacity
+        let maxStateId = stateCapacity - 1
+
+        if _dfaStateIdWidth = 1uy then
+            if maxStateId > int Byte.MaxValue then
+                promoteDfaToUInt16 requiredLength
+            elif _dfaDelta8.Length < requiredLength then
+                Array.Resize(&_dfaDelta8, max requiredLength (_dfaDelta8.Length * 2))
+        elif _dfaStateIdWidth = 2uy then
+            if maxStateId > int UInt16.MaxValue then
+                promoteDfaToInt32 requiredLength
+            elif _dfaDelta16.Length < requiredLength then
+                Array.Resize(&_dfaDelta16, max requiredLength (_dfaDelta16.Length * 2))
+        elif _dfaDelta.Length < requiredLength then
+            Array.Resize(&_dfaDelta, max requiredLength (_dfaDelta.Length * 2))
+
+    let readDfaTransition(offset: int) : TState =
+        if _dfaStateIdWidth = 1uy then int _dfaDelta8[offset]
+        elif _dfaStateIdWidth = 2uy then int _dfaDelta16[offset]
+        else _dfaDelta[offset]
+
+    let writeDfaTransition(offset: int, stateId: TState) =
+        if _dfaStateIdWidth = 1uy then _dfaDelta8[offset] <- byte stateId
+        elif _dfaStateIdWidth = 2uy then _dfaDelta16[offset] <- uint16 stateId
+        else _dfaDelta[offset] <- stateId
+
+    let compactDfaTransitions(stateCount: int) =
+        let usedLength = dfaLengthForStateCapacity (stateCount + 1)
+
+        if stateCount <= int Byte.MaxValue then
+            let target = Array.zeroCreate<byte> usedLength
+
+            for i = 0 to usedLength - 1 do
+                target[i] <- byte _dfaDelta[i]
+
+            _dfaDelta8 <- target
+            _dfaDelta16 <- null
+            _dfaDelta <- Array.empty
+            _dfaStateIdWidth <- 1uy
+        elif stateCount <= int UInt16.MaxValue then
+            let target = Array.zeroCreate<uint16> usedLength
+
+            for i = 0 to usedLength - 1 do
+                target[i] <- uint16 _dfaDelta[i]
+
+            _dfaDelta16 <- target
+            _dfaDelta8 <- null
+            _dfaDelta <- Array.empty
+            _dfaStateIdWidth <- 2uy
+        elif _dfaDelta.Length <> usedLength then
+            Array.Resize(&_dfaDelta, usedLength)
+
+    let dfaTransitionBytes() =
+        if _dfaStateIdWidth = 1uy then int64 _dfaDelta8.Length
+        elif _dfaStateIdWidth = 2uy then int64 _dfaDelta16.Length * 2L
+        else int64 _dfaDelta.Length * 4L
+
     let mutable _revStartStates: TState[] =
         Array.init
             ((I.shl (_cache.NumOfMinterms() * 2) _mintermsLog) + 1)
@@ -212,8 +315,12 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                     Array.Resize(&_svArray, newsize)
                     Array.Resize(&_nullKindArray, newsize)
                     Array.Resize(&_skipKindArray, newsize)
-                    Array.Resize(&_dfaDelta, I.shl newsize _mintermsLog)
+                    ensureDfaCapacity newsize
 
+                // A compact full DFA may have been sized exactly to the states
+                // known at construction time. Keep its transition storage safe
+                // if a later anchor/optimization path creates another state.
+                ensureDfaCapacity (stateOrig + 1)
                 _stateArray[state.Id] <- state
 
                 if nodeFlags.IsAlwaysNullable then
@@ -317,14 +424,14 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                 nextState
         | _ ->
             let dfaOffset = I.bor (I.shl currStateId _mintermsLog) mintermId
-            let nextStateId = _dfaDelta[dfaOffset]
+            let nextStateId = readDfaTransition dfaOffset
 
             if nextStateId > zero then
                 nextStateId
             else
                 let targetState = RegexNode.derivative (_b, loc, minterm, node)
                 let nextStateId = _getOrCreateState(targetState, false).Id
-                _dfaDelta[dfaOffset] <- nextStateId
+                writeDfaTransition (dfaOffset, nextStateId)
                 nextStateId
 
     let fullDfa, skippables =
@@ -394,6 +501,10 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             inferOverrideRegex R_L_Initial _lengthLookup _cache R_canonical reverseNode
 
         RegexOptimizations(_cache, R_L_Initial, _lengthLookup, _regexOverride)
+
+    do
+        if fullDfa && options.UseAdaptiveDfaStateIds then
+            compactDfaTransitions _stateCache.Count
 
     // assertions
     do
@@ -1523,6 +1634,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
     member val RevStartStateId = DFA_TR_REV
     member val Cache = _cache
     member val IsFullDFA = fullDfa
+    member internal _.DfaStateIdWidth = int _dfaStateIdWidth
+    member internal _.DfaTransitionBytes = dfaTransitionBytes ()
+    member internal _.DfaStateCount = _stateCache.Count
 
     member internal this.StateArray = _stateArray |> Array.take (_stateCache.Count + 1)
     member internal this.InternalOptimizations = utf16Optimizations
