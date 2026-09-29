@@ -156,6 +156,24 @@ type Regex
     member internal this.Matcher: GenericRegexMatcher<char> = matcher
     member internal this.Options: ResharpOptions = options
 
+    member internal this.DfaStateIdWidth =
+        match matcher with
+        | :? RegexMatcher<uint64> as m -> m.DfaStateIdWidth
+        | :? RegexMatcher<BitVector> as m -> m.DfaStateIdWidth
+        | _ -> failwith "unreachable"
+
+    member internal this.DfaTransitionBytes =
+        match matcher with
+        | :? RegexMatcher<uint64> as m -> m.DfaTransitionBytes
+        | :? RegexMatcher<BitVector> as m -> m.DfaTransitionBytes
+        | _ -> failwith "unreachable"
+
+    member internal this.DfaStateCount =
+        match matcher with
+        | :? RegexMatcher<uint64> as m -> m.DfaStateCount
+        | :? RegexMatcher<BitVector> as m -> m.DfaStateCount
+        | _ -> failwith "unreachable"
+
     /// <summary>
     /// Whether the pattern was compiled to a full DFA at construction time.
     /// Both full and lazy DFAs are thread-safe. A full DFA avoids lock overhead during matching.
