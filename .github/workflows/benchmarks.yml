@@ -1,0 +1,102 @@
+name: Benchmarks
+
+on:
+  push:
+    paths:
+      - "src/Resharp/**"
+      - "src/Resharp.Runtime/**"
+      - "src/Resharp.Benchmarks/**"
+      - "Directory.Build.props"
+      - "Directory.Packages.props"
+      - ".github/workflows/benchmarks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Release benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore src/Resharp.Benchmarks/Resharp.Benchmarks.csproj
+
+      - name: Build benchmarks
+        run: dotnet build src/Resharp.Benchmarks/Resharp.Benchmarks.csproj --configuration Release --no-restore
+
+      - name: Run benchmarks
+        working-directory: src/Resharp.Benchmarks
+        shell: bash
+        run: |
+          mkdir -p BenchmarkDotNet.Artifacts
+          set -o pipefail
+          dotnet run --configuration Release --no-build -- --readme \
+            2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+
+      - name: Record benchmark environment
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts
+          {
+            echo "repository=${GITHUB_REPOSITORY}"
+            echo "commit=${GITHUB_SHA}"
+            echo "ref=${GITHUB_REF}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_number=${GITHUB_RUN_NUMBER}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo
+            echo "== git =="
+            git show -s --format=fuller HEAD
+            echo
+            echo "== uname =="
+            uname -a
+            echo
+            echo "== cpu =="
+            lscpu
+            echo
+            echo "== dotnet =="
+            dotnet --info
+          } > src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/ci-metadata.txt
+
+      - name: Upload benchmark artifacts
+        if: always()
+        id: benchmark-artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-${{ github.run_id }}-${{ github.sha }}
+          path: src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Add artifact link to job summary
+        if: always() && steps.benchmark-artifact.outputs.artifact-url != ''
+        shell: bash
+        run: |
+          {
+            echo "### Benchmark artifacts"
+            echo
+            echo "[Download benchmark results](${{ steps.benchmark-artifact.outputs.artifact-url }})"
+            echo
+            echo "Commit: \`${GITHUB_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
