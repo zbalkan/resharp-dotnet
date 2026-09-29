@@ -16,7 +16,7 @@ public class AdaptiveDfaBench
     private string pattern = "";
     private string haystack = "";
 
-    [Params(96, 300)]
+    [Params(64, 300)]
     public int MinimumPrefixLength { get; set; }
 
     [GlobalSetup]
