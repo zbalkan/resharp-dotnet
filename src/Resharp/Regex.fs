@@ -812,6 +812,19 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
 
     [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+    member private _.nextStateIdAdaptive
+        (
+            currentStateId: int,
+            mt_log: byte,
+            mt_lookup: byte[],
+            input: ReadOnlySpan<char>,
+            pos: int
+        ) : int =
+        let mt = mt_lookup[int input[pos]]
+        let offset = (currentStateId <<< int mt_log) ||| int mt
+        readDfaTransition offset
+
+    [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
     member this.end_first(mt_log: byte, input: ReadOnlySpan<char>, currentStateId: int) : int =
         let mutable currentStateId = currentStateId
         let mutable currentMax = -2
@@ -836,6 +849,47 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
                 currentStateId <- nextStateId
 
+                l_pos <- l_pos + 1
+
+                if l_pos = input.Length then
+                    if StateFlags.canBeNullable _flagsArray[currentStateId] then
+                        currentMax <- l_pos
+
+                    currentStateId <- States.DFA_DEAD
+
+        currentMax
+
+    [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+    member this.end_first_adaptive
+        (mt_log: byte, input: ReadOnlySpan<char>, currentStateId: int)
+        : int =
+        let mutable currentStateId = currentStateId
+        let mutable currentMax = -2
+        let mutable l_pos = 0
+
+        if l_pos = input.Length then
+            currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+            currentStateId <- States.DFA_DEAD
+
+        while currentStateId <> States.DFA_DEAD do
+            if I.clt_un (I.ldelemu1 _nullKindArray currentStateId) NullKind.NotNull then
+                currentStateId <- States.DFA_DEAD
+                currentMax <- l_pos
+            else
+                let mutable nextStateId =
+                    this.nextStateIdAdaptive (
+                        currentStateId,
+                        mt_log,
+                        _mtlookup,
+                        input,
+                        l_pos
+                    )
+
+                if nextStateId = 0 then
+                    if this.deriv_ptr (currentStateId, &nextStateId, input, l_pos) then
+                        ()
+
+                currentStateId <- nextStateId
                 l_pos <- l_pos + 1
 
                 if l_pos = input.Length then
@@ -907,6 +961,70 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
         currentMax
 
+    member this.end_lazy_adaptive
+        (mt_log: byte, startPos: int, input: ReadOnlySpan<char>, currentStateId: int)
+        : int32 =
+        let mutable currentStateId = currentStateId
+        let mutable currentMax = -2
+        let endPos = input.Length
+        let mutable l_pos = startPos
+
+        if l_pos = endPos then
+            currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+            currentStateId <- States.DFA_DEAD
+
+        while currentStateId <> States.DFA_DEAD do
+            if
+                StateFlags.canSkipLeftToRight _flagsArray[currentStateId]
+                && match
+                    MintermSearchValues.nextIndexLeftToRight (
+                        _svArray[currentStateId],
+                        input.Slice(l_pos)
+                    )
+                   with
+                   | -1 ->
+                       currentMax <- this.HandleInputEndFwd(currentMax, endPos, currentStateId)
+                       currentStateId <- States.DFA_DEAD
+                       true
+                   | si ->
+                       l_pos <- l_pos + si
+                       si <> 0
+            then
+                if l_pos = endPos then
+                    currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                    currentStateId <- States.DFA_DEAD
+            else
+                if I.clt_un (I.ldelemu1 _nullKindArray currentStateId) NullKind.NotNull then
+                    match I.ldelemu1 _nullKindArray currentStateId with
+                    | NullKind.CurrentNull
+                    | NullKind.PrevNull as nk -> currentMax <- I.sub l_pos nk
+                    | NullKind.Nulls01 -> currentMax <- l_pos
+                    | _ ->
+                        currentMax <-
+                            this.set_null_fwd_fallback (currentMax, l_pos, currentStateId)
+
+                let mutable nextStateId =
+                    this.nextStateIdAdaptive (
+                        currentStateId,
+                        mt_log,
+                        _mtlookup,
+                        input,
+                        l_pos
+                    )
+
+                if nextStateId = 0 then
+                    if this.deriv_ptr (currentStateId, &nextStateId, input, l_pos) then
+                        ()
+
+                currentStateId <- nextStateId
+                l_pos <- l_pos + 1
+
+                if l_pos = endPos then
+                    currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                    currentStateId <- States.DFA_DEAD
+
+        currentMax
+
     member inline this.end_noskip
         (
             l_dfaDelta: byref<TState[]>,
@@ -946,6 +1064,55 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
             currentStateId <- nextStateId
 
+            l_pos <- l_pos + 1
+
+            if l_pos = input.Length then
+                currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                currentStateId <- States.DFA_DEAD
+
+        currentMax
+
+    member this.end_noskip_adaptive
+        (
+            l_nullKindArray: byref<NullKind[]>,
+            l_mt_lookup: byte[],
+            mt_log: byte,
+            startPos: int,
+            input: ReadOnlySpan<char>,
+            currentStateId: int
+        ) : int32 =
+        let mutable currentStateId = currentStateId
+        let mutable currentMax = -2
+        let mutable l_pos = startPos
+
+        if l_pos = input.Length then
+            currentMax <- this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+            currentStateId <- States.DFA_DEAD
+
+        while currentStateId <> States.DFA_DEAD do
+            if I.clt_un (I.ldelemu1 l_nullKindArray currentStateId) NullKind.NotNull then
+                match I.ldelemu1 l_nullKindArray currentStateId with
+                | NullKind.CurrentNull
+                | NullKind.PrevNull as nk -> currentMax <- I.sub l_pos nk
+                | NullKind.Nulls01 -> currentMax <- l_pos
+                | _ ->
+                    currentMax <-
+                        this.set_null_fwd_fallback (currentMax, l_pos, currentStateId)
+
+            let mutable nextStateId =
+                this.nextStateIdAdaptive (
+                    currentStateId,
+                    mt_log,
+                    l_mt_lookup,
+                    input,
+                    l_pos
+                )
+
+            if nextStateId = 0 then
+                if this.deriv_ptr (currentStateId, &nextStateId, input, l_pos) then
+                    l_nullKindArray <- _nullKindArray
+
+            currentStateId <- nextStateId
             l_pos <- l_pos + 1
 
             if l_pos = input.Length then
