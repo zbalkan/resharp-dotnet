@@ -17,23 +17,31 @@ public class AdaptiveDfaBench
     private string haystack = "";
 
     [Params(96, 300)]
-    public int PatternLength { get; set; }
+    public int MinimumPrefixLength { get; set; }
 
     [GlobalSetup]
     public void Setup()
     {
-        (pattern, haystack) = CreateWorkload(PatternLength);
+        (pattern, haystack) = CreateWorkload(MinimumPrefixLength);
 
         legacy = new Resharp.Regex(pattern, CreateOptions(adaptiveStateIds: false));
         adaptive = new Resharp.Regex(pattern, CreateOptions(adaptiveStateIds: true));
 
         if (!legacy.IsFullDFA || !adaptive.IsFullDFA)
-            throw new InvalidOperationException("adaptive DFA benchmark requires a fully compiled DFA");
+            throw new InvalidOperationException(
+                $"adaptive DFA benchmark requires a fully compiled DFA; " +
+                $"legacy full={legacy.IsFullDFA} states={legacy.DfaStateCount}, " +
+                $"adaptive full={adaptive.IsFullDFA} states={adaptive.DfaStateCount}");
 
-        int expected = legacy.Count(haystack);
-        int actual = adaptive.Count(haystack);
+        int expected = legacy.LongestEnd(haystack.AsSpan());
+        int actual = adaptive.LongestEnd(haystack.AsSpan());
         if (expected != actual)
-            throw new InvalidOperationException($"legacy/adaptive count mismatch: {expected} != {actual}");
+            throw new InvalidOperationException(
+                $"legacy/adaptive LongestEnd mismatch: {expected} != {actual}");
+
+        if (actual != haystack.Length)
+            throw new InvalidOperationException(
+                $"synthetic workload should match the complete haystack: {actual} != {haystack.Length}");
 
         if (adaptive.DfaStateIdWidth >= 4)
             throw new InvalidOperationException(
@@ -44,18 +52,18 @@ public class AdaptiveDfaBench
                 $"adaptive table was not smaller: {adaptive.DfaTransitionBytes} >= {legacy.DfaTransitionBytes}");
 
         Console.WriteLine(
-            $"adaptive-dfa length={PatternLength} states={adaptive.DfaStateCount} " +
+            $"adaptive-dfa min-prefix={MinimumPrefixLength} states={adaptive.DfaStateCount} " +
             $"legacy={legacy.DfaTransitionBytes}B/4-byte " +
             $"adaptive={adaptive.DfaTransitionBytes}B/{adaptive.DfaStateIdWidth}-byte");
     }
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Match")]
-    public int MatchInt32() => legacy.Count(haystack);
+    public int MatchInt32() => legacy.LongestEnd(haystack.AsSpan());
 
     [Benchmark]
     [BenchmarkCategory("Match")]
-    public int MatchAdaptive() => adaptive.Count(haystack);
+    public int MatchAdaptive() => adaptive.LongestEnd(haystack.AsSpan());
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Build")]
@@ -85,28 +93,44 @@ public class AdaptiveDfaBench
         return options;
     }
 
-    private static (string Pattern, string Haystack) CreateWorkload(int length)
+    private static (string Pattern, string Haystack) CreateWorkload(int minimumPrefixLength)
     {
-        const int classCount = 32;
-        var pattern = new StringBuilder(length * 4);
-        var oneMatch = new StringBuilder(length);
+        // The prefix produces roughly one DFA state per required character and
+        // then remains in a single loop. The suffix contributes many distinct
+        // minterms without creating the subset explosion of a periodic prefix.
+        const char prefix0 = '\u0100';
+        const char prefix1 = '\u0101';
+        const int suffixAlternatives = 32;
 
-        for (int i = 0; i < length; i++)
+        var pattern = new StringBuilder();
+        pattern
+            .Append('[').Append(prefix0).Append(prefix1).Append(']')
+            .Append('{').Append(minimumPrefixLength).Append(",}")
+            .Append("(?:");
+
+        for (int i = 0; i < suffixAlternatives; i++)
         {
-            int cls = i % classCount;
-            char first = (char)(0x0100 + cls * 2);
-            char second = (char)(0x0101 + cls * 2);
+            if (i != 0)
+                pattern.Append('|');
 
-            pattern.Append('[').Append(first).Append(second).Append(']');
-            oneMatch.Append(first);
+            char first0 = (char)(0x0200 + i * 4);
+            char first1 = (char)(0x0201 + i * 4);
+            char second0 = (char)(0x0202 + i * 4);
+            char second1 = (char)(0x0203 + i * 4);
+
+            pattern
+                .Append('[').Append(first0).Append(first1).Append(']')
+                .Append('[').Append(second0).Append(second1).Append(']');
         }
 
-        const int targetChars = 1 << 20;
-        int repeats = Math.Max(1, targetChars / oneMatch.Length);
-        var haystack = new StringBuilder(oneMatch.Length * repeats);
+        pattern.Append(')');
 
-        for (int i = 0; i < repeats; i++)
-            haystack.Append(oneMatch);
+        const int targetChars = 1 << 20;
+        int prefixChars = Math.Max(minimumPrefixLength, targetChars - 2);
+        var haystack = new StringBuilder(prefixChars + 2);
+        haystack.Append(prefix0, prefixChars);
+        haystack.Append((char)0x0200);
+        haystack.Append((char)0x0202);
 
         return (pattern.ToString(), haystack.ToString());
     }
