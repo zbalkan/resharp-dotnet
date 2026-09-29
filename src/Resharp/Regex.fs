@@ -522,7 +522,12 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             use mutable acc = new ValueList<int>(16)
             let mutable initState = DFA_TR_REV
             let startPos = this.HandleInputEnd(_flagsArray[initState], &initState, input, &acc)
-            let endStateId = this.collect_skip (&acc, input, startPos, initState)
+            let endStateId =
+                if _dfaStateIdWidth < 4uy then
+                    this.collect_skip_adaptive (&acc, input, startPos, initState)
+                else
+                    this.collect_skip (&acc, input, startPos, initState)
+
             this.HandleInputStart(endStateId, &acc)
             acc.size > 0
 
@@ -1632,7 +1637,11 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             if currStart >= nextValidStart then
                 pos <- currStart + offset
 
-                let matchEnd = this.end_lazy (mt_log, pos, input, startState)
+                let matchEnd =
+                    if _dfaStateIdWidth < 4uy then
+                        this.end_lazy_adaptive (mt_log, pos, input, startState)
+                    else
+                        this.end_lazy (mt_log, pos, input, startState)
 
                 matches.Add(ValueMatch(currStart, matchEnd - currStart))
                 assert (matchEnd <> -2)
@@ -1668,26 +1677,36 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                 let mutable state = startState
 
                 let matchEnd =
-                    I.endNoSkip
-                        (fun currentMax l_pos currentStateId ->
-                            this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                    if _dfaStateIdWidth < 4uy then
+                        this.end_noskip_adaptive (
+                            &l_nullKindArray,
+                            _mtlookup,
+                            mt_log,
+                            pos,
+                            input,
+                            state
                         )
-                        (fun currentMax l_pos currentStateId ->
-                            this.set_null_fwd_fallback (currentMax, l_pos, currentStateId)
-                        )
-                        (fun state char ->
-                            let nextState = this.rev_deriv (state, char)
-                            l_dfaDelta <- _dfaDelta
-                            l_nullKindArray <- _nullKindArray
-                            nextState
-                        )
-                        &l_dfaDelta
-                        &l_nullKindArray
-                        _mtlookup
-                        mt_log
-                        input
-                        state
-                        pos
+                    else
+                        I.endNoSkip
+                            (fun currentMax l_pos currentStateId ->
+                                this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                            )
+                            (fun currentMax l_pos currentStateId ->
+                                this.set_null_fwd_fallback (currentMax, l_pos, currentStateId)
+                            )
+                            (fun state char ->
+                                let nextState = this.rev_deriv (state, char)
+                                l_dfaDelta <- _dfaDelta
+                                l_nullKindArray <- _nullKindArray
+                                nextState
+                            )
+                            &l_dfaDelta
+                            &l_nullKindArray
+                            _mtlookup
+                            mt_log
+                            input
+                            state
+                            pos
 
                 matches.Add(ValueMatch(currStart, matchEnd - currStart))
                 assert (matchEnd <> -2)
@@ -1786,9 +1805,14 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             startPosition: int
         ) =
         let endStateId =
-            match skippables with
-            | 0 -> this.collect_noskip (&acc, input, startPosition, initState)
-            | _ -> this.collect_skip (&acc, input, startPosition, initState)
+            if _dfaStateIdWidth < 4uy then
+                match skippables with
+                | 0 -> this.collect_noskip_adaptive (&acc, input, startPosition, initState)
+                | _ -> this.collect_skip_adaptive (&acc, input, startPosition, initState)
+            else
+                match skippables with
+                | 0 -> this.collect_noskip (&acc, input, startPosition, initState)
+                | _ -> this.collect_skip (&acc, input, startPosition, initState)
 
         this.HandleInputStart(endStateId, &acc)
 
