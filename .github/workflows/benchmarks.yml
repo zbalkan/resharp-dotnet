@@ -32,10 +32,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up .NET 10
+      - name: Set up .NET 10.0.102
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "10.0.x"
+          dotnet-version: "10.0.102"
 
       - name: Restore
         run: dotnet restore src/Resharp.Benchmarks/Resharp.Benchmarks.csproj
@@ -51,6 +51,18 @@ jobs:
           set -o pipefail
           dotnet run --configuration Release --framework net10.0 --no-build -- --readme \
             2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+
+      - name: Validate benchmark results
+        shell: bash
+        run: |
+          log=src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/ci-console.log
+
+          if grep -Fq "There are not any results runs" "${log}" \
+            || grep -Fq "Benchmarks with issues:" "${log}" \
+            || grep -Eq '\|[[:space:]]+NA[[:space:]]+\|' "${log}"; then
+            echo "::error::BenchmarkDotNet completed without valid workload results."
+            exit 1
+          fi
 
       - name: Record benchmark environment
         if: always()
