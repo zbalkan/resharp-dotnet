@@ -1372,6 +1372,51 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         currentStateId
 
     [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.collect_skip_adaptive
+        (
+            acc: byref<ValueList<int>>,
+            input: ReadOnlySpan<char>,
+            startPos: int,
+            startStateId: int
+        ) : int =
+        let mutable currentStateId = startStateId
+        let mutable l_pos = startPos
+        let l_mtlog = _mintermsLog
+
+        while l_pos <> 0 do
+            let successfulSkip =
+                (I.clt_un (I.ldelemu1 _skipKindArray currentStateId) SkipKind.NotSkip)
+                && match I.ldelemu1 _skipKindArray currentStateId with
+                   | SkipKind.SkipInitial ->
+                       this.TrySkipInitialRevChar(input, &l_pos, &currentStateId)
+                   | _ -> this.skip_active_rev (input, &l_pos, currentStateId, &acc)
+
+            if successfulSkip then
+                if I.isNull _nullKindArray currentStateId then
+                    I.setNullFull _stateArray &acc _nullKindArray currentStateId l_pos
+            else
+                l_pos <- l_pos - 1
+
+                let mutable nextStateId =
+                    this.nextStateIdAdaptive (
+                        currentStateId,
+                        l_mtlog,
+                        _mtlookup,
+                        input,
+                        l_pos
+                    )
+
+                if nextStateId = 0 then
+                    nextStateId <- this.rev_deriv (currentStateId, input[l_pos])
+
+                currentStateId <- nextStateId
+
+                if I.isNull _nullKindArray currentStateId then
+                    I.setNullFull _stateArray &acc _nullKindArray currentStateId l_pos
+
+        currentStateId
+
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
     member this.collect_noskip
         (
             acc: byref<ValueList<int>>,
@@ -1407,6 +1452,45 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
         currentStateId
 
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.collect_noskip_adaptive
+        (
+            acc: byref<ValueList<int>>,
+            input: ReadOnlySpan<char>,
+            startPos: int,
+            startStateId: int
+        ) : int =
+        let mutable currentStateId = startStateId
+        let mutable l_pos = startPos
+        let mutable l_stateArray = _stateArray
+        let mutable l_nullKindArray = _nullKindArray
+        let l_mtlookup = _mtlookup
+        let l_mtlog = _mintermsLog
+
+        while l_pos <> 0 do
+            l_pos <- l_pos - 1
+
+            let mutable nextStateId =
+                this.nextStateIdAdaptive (
+                    currentStateId,
+                    l_mtlog,
+                    l_mtlookup,
+                    input,
+                    l_pos
+                )
+
+            if nextStateId = 0 then
+                nextStateId <- this.rev_deriv (currentStateId, input[l_pos])
+                l_stateArray <- _stateArray
+                l_nullKindArray <- _nullKindArray
+
+            currentStateId <- nextStateId
+
+            if I.isNull l_nullKindArray currentStateId then
+                I.setNullFull l_stateArray &acc l_nullKindArray currentStateId l_pos
+
+        currentStateId
+
 
     member this.AddPendingRev(currentStateId: int, acc: byref<ValueList<int>>, realPos: int) =
         let span = _stateArray[currentStateId].PendingNullablePositions
@@ -1427,7 +1511,13 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
     override this.FirstEnd(input: ReadOnlySpan<char>) =
         let mt_log = _mintermsLog
 
-        match this.end_first (mt_log, input, DFA_R_NOPR) with
+        let result =
+            if _dfaStateIdWidth < 4uy then
+                this.end_first_adaptive (mt_log, input, DFA_R_NOPR)
+            else
+                this.end_first (mt_log, input, DFA_R_NOPR)
+
+        match result with
         | -2 -> -1
         | n -> n
 
@@ -1435,7 +1525,13 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
     override this.LongestEnd(input: ReadOnlySpan<char>) =
         let mt_log = _mintermsLog
 
-        match this.end_lazy (mt_log, 0, input, DFA_R_NOPR) with
+        let result =
+            if _dfaStateIdWidth < 4uy then
+                this.end_lazy_adaptive (mt_log, 0, input, DFA_R_NOPR)
+            else
+                this.end_lazy (mt_log, 0, input, DFA_R_NOPR)
+
+        match result with
         | -2 -> -1
         | n -> n
 
