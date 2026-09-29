@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: benchmarks-${{ github.ref }}
+  group: benchmarks-v2-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
