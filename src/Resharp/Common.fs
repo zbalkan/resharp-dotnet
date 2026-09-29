@@ -39,6 +39,10 @@ type ResharpOptions() =
     /// default:100, Full dfa compilation state space threshold
     member val DfaThreshold = 100 with get, set
 
+    /// Internal benchmark switch. Full DFAs use the narrowest transition-state storage
+    /// that can represent all constructed state IDs. Lazy DFAs remain Int32-backed.
+    member val internal UseAdaptiveDfaStateIds = true with get, set
+
     /// Attempt more expensive optimizations for high-throughput
     static member HighThroughputDefaults =
         ResharpOptions(
