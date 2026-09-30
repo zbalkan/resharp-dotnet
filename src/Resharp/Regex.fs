@@ -504,6 +504,36 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
         RegexOptimizations(_cache, R_L_Initial, _lengthLookup, _regexOverride)
 
+    // A successful initial full-DFA compilation can be followed by optimizer
+    // inference that creates additional states. Close those states transitively
+    // before compacting so the matching kernel never needs the lazy derivative
+    // fallback. If closure crosses the configured DFA threshold, keep the
+    // existing adaptive/lazy path instead.
+    let frozenDfa =
+        if fullDfa && options.UseAdaptiveDfaStateIds && options.UseFrozenFullDfa then
+            let mids = _cache.NumOfMinterms()
+            let mutable stateId = 1
+            let mutable canFreeze = _stateCache.Count < options.DfaThreshold
+
+            while canFreeze && stateId <= _stateCache.Count do
+                let mutable mintermId = 0
+
+                while canFreeze && mintermId < mids do
+                    createTransition
+                        LocationKind.Center
+                        stateId
+                        (byte mintermId)
+                    |> ignore
+
+                    canFreeze <- _stateCache.Count < options.DfaThreshold
+                    mintermId <- mintermId + 1
+
+                stateId <- stateId + 1
+
+            canFreeze && stateId > _stateCache.Count
+        else
+            false
+
     do
         if fullDfa && options.UseAdaptiveDfaStateIds then
             compactDfaTransitions _stateCache.Count
@@ -1923,6 +1953,7 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
     member val RevStartStateId = DFA_TR_REV
     member val Cache = _cache
     member val IsFullDFA = fullDfa
+    member internal _.IsFrozenDFA = frozenDfa
     member internal _.DfaStateIdWidth = int _dfaStateIdWidth
     member internal _.DfaTransitionBytes = dfaTransitionBytes ()
     member internal _.DfaStateCount = _stateCache.Count
