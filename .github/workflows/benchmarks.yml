@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: benchmarks-v2-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   benchmark:
@@ -68,9 +68,9 @@ jobs:
         run: |
           mkdir -p BenchmarkDotNet.Artifacts
           set -o pipefail
-          dotnet run --configuration Release --framework net10.0 --no-build -- --readme \
-            2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
           dotnet run --configuration Release --framework net10.0 --no-build -- --adaptive-dfa \
+            2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+          dotnet run --configuration Release --framework net10.0 --no-build -- --readme \
             2>&1 | tee -a BenchmarkDotNet.Artifacts/ci-console.log
 
       - name: Validate benchmark results
