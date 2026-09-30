@@ -156,6 +156,12 @@ type Regex
     member internal this.Matcher: GenericRegexMatcher<char> = matcher
     member internal this.Options: ResharpOptions = options
 
+    member internal this.IsFrozenDFA =
+        match matcher with
+        | :? RegexMatcher<uint64> as m -> m.IsFrozenDFA
+        | :? RegexMatcher<BitVector> as m -> m.IsFrozenDFA
+        | _ -> failwith "unreachable"
+
     member internal this.DfaStateIdWidth =
         match matcher with
         | :? RegexMatcher<uint64> as m -> m.DfaStateIdWidth
