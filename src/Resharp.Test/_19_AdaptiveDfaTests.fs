@@ -6,7 +6,7 @@ open System.Threading.Tasks
 open Xunit
 open Resharp
 
-let private createOptions adaptive =
+let private createOptions (adaptive: bool) =
     let options = ResharpOptions()
     options.InitialDfaCapacity <- 512
     options.MaxDfaCapacity <- 4096
@@ -19,7 +19,7 @@ let private createOptions adaptive =
     options.UseAdaptiveDfaStateIds <- adaptive
     options
 
-let private createWorkload minimumPrefixLength =
+let private createWorkload (minimumPrefixLength: int) =
     let prefix0 = '\u0100'
     let prefix1 = '\u0101'
     let suffixAlternatives = 32
@@ -55,7 +55,7 @@ let private createWorkload minimumPrefixLength =
 
     pattern.ToString(), haystack.ToString()
 
-let private assertEquivalent minimumPrefixLength expectedWidth =
+let private assertEquivalent (minimumPrefixLength: int) (expectedWidth: int) =
     let pattern, haystack = createWorkload minimumPrefixLength
     let legacy = Regex(pattern, createOptions false)
     let adaptive = Regex(pattern, createOptions true)
