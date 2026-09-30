@@ -555,7 +555,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             let mutable initState = DFA_TR_REV
             let startPos = this.HandleInputEnd(_flagsArray[initState], &initState, input, &acc)
             let endStateId =
-                if _dfaStateIdWidth < 4uy then
+                if frozenDfa then
+                    this.collect_skip_frozen (&acc, input, startPos, initState)
+                elif _dfaStateIdWidth < 4uy then
                     this.collect_skip_adaptive (&acc, input, startPos, initState)
                 else
                     this.collect_skip (&acc, input, startPos, initState)
@@ -1767,7 +1769,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         let mt_log = _mintermsLog
 
         let result =
-            if _dfaStateIdWidth < 4uy then
+            if frozenDfa then
+                this.end_first_frozen (mt_log, input, DFA_R_NOPR)
+            elif _dfaStateIdWidth < 4uy then
                 this.end_first_adaptive (mt_log, input, DFA_R_NOPR)
             else
                 this.end_first (mt_log, input, DFA_R_NOPR)
@@ -1781,7 +1785,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         let mt_log = _mintermsLog
 
         let result =
-            if _dfaStateIdWidth < 4uy then
+            if frozenDfa then
+                this.end_lazy_frozen (mt_log, 0, input, DFA_R_NOPR)
+            elif _dfaStateIdWidth < 4uy then
                 this.end_lazy_adaptive (mt_log, 0, input, DFA_R_NOPR)
             else
                 this.end_lazy (mt_log, 0, input, DFA_R_NOPR)
@@ -1888,7 +1894,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                 pos <- currStart + offset
 
                 let matchEnd =
-                    if _dfaStateIdWidth < 4uy then
+                    if frozenDfa then
+                        this.end_lazy_frozen (mt_log, pos, input, startState)
+                    elif _dfaStateIdWidth < 4uy then
                         this.end_lazy_adaptive (mt_log, pos, input, startState)
                     else
                         this.end_lazy (mt_log, pos, input, startState)
@@ -1927,7 +1935,16 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                 let mutable state = startState
 
                 let matchEnd =
-                    if _dfaStateIdWidth < 4uy then
+                    if frozenDfa then
+                        this.end_noskip_frozen (
+                            &l_nullKindArray,
+                            _mtlookup,
+                            mt_log,
+                            pos,
+                            input,
+                            state
+                        )
+                    elif _dfaStateIdWidth < 4uy then
                         this.end_noskip_adaptive (
                             &l_nullKindArray,
                             _mtlookup,
@@ -2055,7 +2072,11 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
             startPosition: int
         ) =
         let endStateId =
-            if _dfaStateIdWidth < 4uy then
+            if frozenDfa then
+                match skippables with
+                | 0 -> this.collect_noskip_frozen (&acc, input, startPosition, initState)
+                | _ -> this.collect_skip_frozen (&acc, input, startPosition, initState)
+            elif _dfaStateIdWidth < 4uy then
                 match skippables with
                 | 0 -> this.collect_noskip_adaptive (&acc, input, startPosition, initState)
                 | _ -> this.collect_skip_adaptive (&acc, input, startPosition, initState)
