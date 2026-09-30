@@ -43,6 +43,11 @@ type ResharpOptions() =
     /// that can represent all constructed state IDs. Lazy DFAs remain Int32-backed.
     member val internal UseAdaptiveDfaStateIds = true with get, set
 
+    /// Internal benchmark switch. After all constructor-time optimizations have created
+    /// their states, close every remaining center transition and run a no-fallback
+    /// matching kernel over the immutable compact DFA.
+    member val internal UseFrozenFullDfa = true with get, set
+
     /// Attempt more expensive optimizations for high-throughput
     static member HighThroughputDefaults =
         ResharpOptions(
