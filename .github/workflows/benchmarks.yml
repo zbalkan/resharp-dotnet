@@ -5,6 +5,7 @@ on:
     paths:
       - "src/Resharp/**"
       - "src/Resharp.Runtime/**"
+      - "src/Resharp.Test/**"
       - "src/Resharp.Benchmarks/**"
       - "Directory.Build.props"
       - "Directory.Packages.props"
