@@ -6,7 +6,7 @@ open System.Threading.Tasks
 open Xunit
 open Resharp
 
-let private createOptions (adaptive: bool) =
+let private createOptions (adaptive: bool) (frozen: bool) =
     let options = ResharpOptions()
     options.InitialDfaCapacity <- 512
     options.MaxDfaCapacity <- 4096
@@ -17,6 +17,7 @@ let private createOptions (adaptive: bool) =
     options.StartsetInferenceLimit <- 0
     options.UseDotnetUnicode <- false
     options.UseAdaptiveDfaStateIds <- adaptive
+    options.UseFrozenFullDfa <- frozen
     options
 
 let private createWorkload (minimumPrefixLength: int) =
@@ -57,22 +58,36 @@ let private createWorkload (minimumPrefixLength: int) =
 
 let private assertEquivalent (minimumPrefixLength: int) (expectedWidth: int) =
     let pattern, haystack = createWorkload minimumPrefixLength
-    let legacy = Regex(pattern, createOptions false)
-    let adaptive = Regex(pattern, createOptions true)
+    let legacy = Regex(pattern, createOptions false false)
+    let adaptive = Regex(pattern, createOptions true false)
+    let frozen = Regex(pattern, createOptions true true)
 
     Assert.True(legacy.IsFullDFA)
     Assert.True(adaptive.IsFullDFA)
+    Assert.True(frozen.IsFullDFA)
+    Assert.False(adaptive.IsFrozenDFA)
+    Assert.True(frozen.IsFrozenDFA)
     Assert.Equal(4, legacy.DfaStateIdWidth)
     Assert.Equal(expectedWidth, adaptive.DfaStateIdWidth)
-    Assert.Equal(legacy.DfaStateCount, adaptive.DfaStateCount)
+    Assert.Equal(expectedWidth, frozen.DfaStateIdWidth)
     Assert.True(adaptive.DfaTransitionBytes < legacy.DfaTransitionBytes)
 
-    Assert.Equal(legacy.IsMatch(haystack), adaptive.IsMatch(haystack))
-    Assert.Equal(legacy.Count(haystack), adaptive.Count(haystack))
-    Assert.Equal(legacy.FirstEnd(haystack), adaptive.FirstEnd(haystack))
-    Assert.Equal(legacy.LongestEnd(haystack), adaptive.LongestEnd(haystack))
+    let legacyIsMatch = legacy.IsMatch(haystack)
+    let legacyCount = legacy.Count(haystack)
+    let legacyFirstEnd = legacy.FirstEnd(haystack)
+    let legacyLongestEnd = legacy.LongestEnd(haystack)
 
-    legacy, adaptive, haystack
+    Assert.Equal(legacyIsMatch, adaptive.IsMatch(haystack))
+    Assert.Equal(legacyCount, adaptive.Count(haystack))
+    Assert.Equal(legacyFirstEnd, adaptive.FirstEnd(haystack))
+    Assert.Equal(legacyLongestEnd, adaptive.LongestEnd(haystack))
+
+    Assert.Equal(legacyIsMatch, frozen.IsMatch(haystack))
+    Assert.Equal(legacyCount, frozen.Count(haystack))
+    Assert.Equal(legacyFirstEnd, frozen.FirstEnd(haystack))
+    Assert.Equal(legacyLongestEnd, frozen.LongestEnd(haystack))
+
+    legacy, frozen, haystack
 
 [<Fact>]
 let ``full DFA uses byte state IDs when state count fits`` () =
