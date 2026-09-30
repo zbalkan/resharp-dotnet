@@ -115,8 +115,10 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         for i = 0 to source.Length - 1 do
             target[i] <- uint16 source[i]
 
+        // Keep the previous array alive. A concurrent reader may already have
+        // observed the old width and can safely finish against that immutable
+        // snapshot; zero entries simply take the existing derivative fallback.
         _dfaDelta16 <- target
-        _dfaDelta8 <- null
         _dfaStateIdWidth <- 2uy
 
     let promoteDfaToInt32(requiredLength: int) =
@@ -137,9 +139,9 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         else
             _dfaDelta.AsSpan().CopyTo(target.AsSpan())
 
+        // Do not clear the narrower arrays here: a concurrent reader may have
+        // captured the previous width immediately before promotion.
         _dfaDelta <- target
-        _dfaDelta8 <- null
-        _dfaDelta16 <- null
         _dfaStateIdWidth <- 4uy
 
     let ensureDfaCapacity(stateCapacity: int) =
