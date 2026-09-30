@@ -43,17 +43,23 @@ public class AdaptiveDfaBench
             throw new InvalidOperationException(
                 $"synthetic workload should match the complete haystack: {actual} != {haystack.Length}");
 
-        if (adaptive.DfaStateIdWidth >= 4)
+        int expectedWidth = MinimumPrefixLength <= 64 ? 1 : 2;
+        if (adaptive.DfaStateIdWidth != expectedWidth)
             throw new InvalidOperationException(
-                $"workload did not produce narrow DFA state IDs: {adaptive.DfaStateIdWidth} bytes");
+                $"workload should exercise {expectedWidth}-byte DFA state IDs, got " +
+                $"{adaptive.DfaStateIdWidth} bytes");
 
         if (adaptive.DfaTransitionBytes >= legacy.DfaTransitionBytes)
             throw new InvalidOperationException(
                 $"adaptive table was not smaller: {adaptive.DfaTransitionBytes} >= {legacy.DfaTransitionBytes}");
 
+        long usedSlots = adaptive.DfaTransitionBytes / adaptive.DfaStateIdWidth;
+        long exactInt32Bytes = usedSlots * sizeof(int);
+
         Console.WriteLine(
             $"adaptive-dfa min-prefix={MinimumPrefixLength} states={adaptive.DfaStateCount} " +
-            $"legacy={legacy.DfaTransitionBytes}B/4-byte " +
+            $"legacy-capacity={legacy.DfaTransitionBytes}B/4-byte " +
+            $"int32-exact={exactInt32Bytes}B " +
             $"adaptive={adaptive.DfaTransitionBytes}B/{adaptive.DfaStateIdWidth}-byte");
     }
 
