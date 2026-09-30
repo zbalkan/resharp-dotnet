@@ -11,8 +11,8 @@ namespace Resharp.Benchmarks;
 [CategoriesColumn]
 public class AdaptiveDfaBench
 {
-    private Resharp.Regex legacy = null!;
     private Resharp.Regex adaptive = null!;
+    private Resharp.Regex frozen = null!;
     private string pattern = "";
     private string haystack = "";
 
@@ -24,64 +24,66 @@ public class AdaptiveDfaBench
     {
         (pattern, haystack) = CreateWorkload(MinimumPrefixLength);
 
-        legacy = new Resharp.Regex(pattern, CreateOptions(adaptiveStateIds: false));
-        adaptive = new Resharp.Regex(pattern, CreateOptions(adaptiveStateIds: true));
+        adaptive = new Resharp.Regex(
+            pattern,
+            CreateOptions(adaptiveStateIds: true, frozenFullDfa: false));
+        frozen = new Resharp.Regex(
+            pattern,
+            CreateOptions(adaptiveStateIds: true, frozenFullDfa: true));
 
-        if (!legacy.IsFullDFA || !adaptive.IsFullDFA)
+        if (!adaptive.IsFullDFA || !frozen.IsFullDFA)
             throw new InvalidOperationException(
-                $"adaptive DFA benchmark requires a fully compiled DFA; " +
-                $"legacy full={legacy.IsFullDFA} states={legacy.DfaStateCount}, " +
-                $"adaptive full={adaptive.IsFullDFA} states={adaptive.DfaStateCount}");
+                $"frozen DFA benchmark requires fully compiled DFAs; " +
+                $"adaptive full={adaptive.IsFullDFA} states={adaptive.DfaStateCount}, " +
+                $"frozen full={frozen.IsFullDFA} states={frozen.DfaStateCount}");
 
-        int expected = legacy.LongestEnd(haystack.AsSpan());
-        int actual = adaptive.LongestEnd(haystack.AsSpan());
+        if (adaptive.IsFrozenDFA || !frozen.IsFrozenDFA)
+            throw new InvalidOperationException(
+                $"invalid benchmark modes: adaptive frozen={adaptive.IsFrozenDFA}, " +
+                $"frozen frozen={frozen.IsFrozenDFA}");
+
+        int expected = adaptive.LongestEnd(haystack.AsSpan());
+        int actual = frozen.LongestEnd(haystack.AsSpan());
         if (expected != actual)
             throw new InvalidOperationException(
-                $"legacy/adaptive LongestEnd mismatch: {expected} != {actual}");
+                $"adaptive/frozen LongestEnd mismatch: {expected} != {actual}");
 
         if (actual != haystack.Length)
             throw new InvalidOperationException(
                 $"synthetic workload should match the complete haystack: {actual} != {haystack.Length}");
 
         int expectedWidth = MinimumPrefixLength <= 64 ? 1 : 2;
-        if (adaptive.DfaStateIdWidth != expectedWidth)
+        if (adaptive.DfaStateIdWidth != expectedWidth || frozen.DfaStateIdWidth != expectedWidth)
             throw new InvalidOperationException(
                 $"workload should exercise {expectedWidth}-byte DFA state IDs, got " +
-                $"{adaptive.DfaStateIdWidth} bytes");
-
-        if (adaptive.DfaTransitionBytes >= legacy.DfaTransitionBytes)
-            throw new InvalidOperationException(
-                $"adaptive table was not smaller: {adaptive.DfaTransitionBytes} >= {legacy.DfaTransitionBytes}");
-
-        long usedSlots = adaptive.DfaTransitionBytes / adaptive.DfaStateIdWidth;
-        long exactInt32Bytes = usedSlots * sizeof(int);
+                $"adaptive={adaptive.DfaStateIdWidth}, frozen={frozen.DfaStateIdWidth}");
 
         Console.WriteLine(
-            $"adaptive-dfa min-prefix={MinimumPrefixLength} states={adaptive.DfaStateCount} " +
-            $"legacy-capacity={legacy.DfaTransitionBytes}B/4-byte " +
-            $"int32-exact={exactInt32Bytes}B " +
-            $"adaptive={adaptive.DfaTransitionBytes}B/{adaptive.DfaStateIdWidth}-byte");
+            $"frozen-dfa min-prefix={MinimumPrefixLength} " +
+            $"adaptive-states={adaptive.DfaStateCount} frozen-states={frozen.DfaStateCount} " +
+            $"adaptive={adaptive.DfaTransitionBytes}B/{adaptive.DfaStateIdWidth}-byte " +
+            $"frozen={frozen.DfaTransitionBytes}B/{frozen.DfaStateIdWidth}-byte");
     }
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Match")]
-    public int MatchInt32() => legacy.LongestEnd(haystack.AsSpan());
+    public int MatchAdaptive() => adaptive.LongestEnd(haystack.AsSpan());
 
     [Benchmark]
     [BenchmarkCategory("Match")]
-    public int MatchAdaptive() => adaptive.LongestEnd(haystack.AsSpan());
+    public int MatchFrozen() => frozen.LongestEnd(haystack.AsSpan());
 
     [Benchmark(Baseline = true)]
     [BenchmarkCategory("Build")]
-    public Resharp.Regex BuildInt32() =>
-        new(pattern, CreateOptions(adaptiveStateIds: false));
+    public Resharp.Regex BuildAdaptive() =>
+        new(pattern, CreateOptions(adaptiveStateIds: true, frozenFullDfa: false));
 
     [Benchmark]
     [BenchmarkCategory("Build")]
-    public Resharp.Regex BuildAdaptive() =>
-        new(pattern, CreateOptions(adaptiveStateIds: true));
+    public Resharp.Regex BuildFrozen() =>
+        new(pattern, CreateOptions(adaptiveStateIds: true, frozenFullDfa: true));
 
-    private static ResharpOptions CreateOptions(bool adaptiveStateIds)
+    private static ResharpOptions CreateOptions(bool adaptiveStateIds, bool frozenFullDfa)
     {
         var options = new ResharpOptions
         {
@@ -96,6 +98,7 @@ public class AdaptiveDfaBench
         };
 
         options.UseAdaptiveDfaStateIds = adaptiveStateIds;
+        options.UseFrozenFullDfa = frozenFullDfa;
         return options;
     }
 
