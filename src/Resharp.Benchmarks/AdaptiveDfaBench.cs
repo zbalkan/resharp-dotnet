@@ -5,7 +5,7 @@ using BenchmarkDotNet.Jobs;
 
 namespace Resharp.Benchmarks;
 
-[ShortRunJob]
+[SimpleJob(launchCount: 3, warmupCount: 8, iterationCount: 12)]
 [Config(typeof(BenchConfig))]
 [GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory)]
 [CategoriesColumn]
