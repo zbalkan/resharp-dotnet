@@ -11,6 +11,7 @@ namespace Resharp.Benchmarks;
 [CategoriesColumn]
 public class AdaptiveDfaBench
 {
+    private Resharp.Regex original = null!;
     private Resharp.Regex adaptive = null!;
     private Resharp.Regex frozen = null!;
     private string pattern = "";
@@ -24,6 +25,9 @@ public class AdaptiveDfaBench
     {
         (pattern, haystack) = CreateWorkload(MinimumPrefixLength);
 
+        original = new Resharp.Regex(
+            pattern,
+            CreateOptions(adaptiveStateIds: false, frozenFullDfa: false));
         adaptive = new Resharp.Regex(
             pattern,
             CreateOptions(adaptiveStateIds: true, frozenFullDfa: false));
@@ -31,41 +35,51 @@ public class AdaptiveDfaBench
             pattern,
             CreateOptions(adaptiveStateIds: true, frozenFullDfa: true));
 
-        if (!adaptive.IsFullDFA || !frozen.IsFullDFA)
+        if (!original.IsFullDFA || !adaptive.IsFullDFA || !frozen.IsFullDFA)
             throw new InvalidOperationException(
-                $"frozen DFA benchmark requires fully compiled DFAs; " +
+                $"three-target DFA benchmark requires fully compiled DFAs; " +
+                $"original full={original.IsFullDFA} states={original.DfaStateCount}, " +
                 $"adaptive full={adaptive.IsFullDFA} states={adaptive.DfaStateCount}, " +
                 $"frozen full={frozen.IsFullDFA} states={frozen.DfaStateCount}");
 
-        if (adaptive.IsFrozenDFA || !frozen.IsFrozenDFA)
+        if (original.IsFrozenDFA || adaptive.IsFrozenDFA || !frozen.IsFrozenDFA)
             throw new InvalidOperationException(
-                $"invalid benchmark modes: adaptive frozen={adaptive.IsFrozenDFA}, " +
-                $"frozen frozen={frozen.IsFrozenDFA}");
+                $"invalid benchmark modes: original frozen={original.IsFrozenDFA}, " +
+                $"adaptive frozen={adaptive.IsFrozenDFA}, frozen frozen={frozen.IsFrozenDFA}");
 
-        int expected = adaptive.LongestEnd(haystack.AsSpan());
-        int actual = frozen.LongestEnd(haystack.AsSpan());
-        if (expected != actual)
+        int expected = original.LongestEnd(haystack.AsSpan());
+        int adaptiveResult = adaptive.LongestEnd(haystack.AsSpan());
+        int frozenResult = frozen.LongestEnd(haystack.AsSpan());
+        if (expected != adaptiveResult || expected != frozenResult)
             throw new InvalidOperationException(
-                $"adaptive/frozen LongestEnd mismatch: {expected} != {actual}");
+                $"three-target LongestEnd mismatch: " +
+                $"original={expected}, adaptive={adaptiveResult}, frozen={frozenResult}");
 
-        if (actual != haystack.Length)
+        if (frozenResult != haystack.Length)
             throw new InvalidOperationException(
-                $"synthetic workload should match the complete haystack: {actual} != {haystack.Length}");
+                $"synthetic workload should match the complete haystack: " +
+                $"{frozenResult} != {haystack.Length}");
 
         int expectedWidth = MinimumPrefixLength <= 64 ? 1 : 2;
-        if (adaptive.DfaStateIdWidth != expectedWidth || frozen.DfaStateIdWidth != expectedWidth)
+        if (original.DfaStateIdWidth != sizeof(int)
+            || adaptive.DfaStateIdWidth != expectedWidth
+            || frozen.DfaStateIdWidth != expectedWidth)
             throw new InvalidOperationException(
-                $"workload should exercise {expectedWidth}-byte DFA state IDs, got " +
+                $"unexpected DFA state widths: original={original.DfaStateIdWidth}, " +
                 $"adaptive={adaptive.DfaStateIdWidth}, frozen={frozen.DfaStateIdWidth}");
 
         Console.WriteLine(
-            $"frozen-dfa min-prefix={MinimumPrefixLength} " +
-            $"adaptive-states={adaptive.DfaStateCount} frozen-states={frozen.DfaStateCount} " +
-            $"adaptive={adaptive.DfaTransitionBytes}B/{adaptive.DfaStateIdWidth}-byte " +
-            $"frozen={frozen.DfaTransitionBytes}B/{frozen.DfaStateIdWidth}-byte");
+            $"three-target-dfa min-prefix={MinimumPrefixLength} " +
+            $"states=original:{original.DfaStateCount},adaptive:{adaptive.DfaStateCount},frozen:{frozen.DfaStateCount} " +
+            $"bytes=original:{original.DfaTransitionBytes},adaptive:{adaptive.DfaTransitionBytes},frozen:{frozen.DfaTransitionBytes} " +
+            $"widths=original:{original.DfaStateIdWidth},adaptive:{adaptive.DfaStateIdWidth},frozen:{frozen.DfaStateIdWidth}");
     }
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("Match")]
+    public int MatchOriginal() => original.LongestEnd(haystack.AsSpan());
+
+    [Benchmark]
     [BenchmarkCategory("Match")]
     public int MatchAdaptive() => adaptive.LongestEnd(haystack.AsSpan());
 
@@ -74,6 +88,11 @@ public class AdaptiveDfaBench
     public int MatchFrozen() => frozen.LongestEnd(haystack.AsSpan());
 
     [Benchmark(Baseline = true)]
+    [BenchmarkCategory("Build")]
+    public Resharp.Regex BuildOriginal() =>
+        new(pattern, CreateOptions(adaptiveStateIds: false, frozenFullDfa: false));
+
+    [Benchmark]
     [BenchmarkCategory("Build")]
     public Resharp.Regex BuildAdaptive() =>
         new(pattern, CreateOptions(adaptiveStateIds: true, frozenFullDfa: false));
