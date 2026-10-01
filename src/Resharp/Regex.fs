@@ -1229,6 +1229,62 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
         acc
 
 
+    /// Count-only equivalent of llmatch_all_override. It preserves the same
+    /// non-overlapping cursor advancement without constructing ValueMatch values.
+    member internal this.llmatch_count_override
+        (input: ReadOnlySpan<char>, overridden: MatchOverride<char>)
+        : int =
+        let tspan = input
+        let mutable count = 0
+
+        match overridden with
+        | MatchOverride.FixedLengthString s ->
+            let pspan = s.Span
+            let mutable looping = true
+            let mutable currPos = 0
+            let textLength = s.Length
+
+            while looping do
+                match tspan.Slice(currPos).IndexOf(pspan, StringComparison.Ordinal) with
+                | -1 -> looping <- false
+                | n ->
+                    count <- count + 1
+                    currPos <- currPos + n + textLength
+        | MatchOverride.FixedLengthStringCaseIgnore(s) ->
+            let pspan = s.Span
+            let mutable looping = true
+            let mutable currPos = 0
+            let textLength = s.Length
+
+            while looping do
+                match
+                    tspan.Slice(currPos).IndexOf(pspan, StringComparison.OrdinalIgnoreCase)
+                with
+                | -1 -> looping <- false
+                | n ->
+                    count <- count + 1
+                    currPos <- currPos + n + textLength
+        | MatchOverride.NonAsciiFixedLengthStringCaseIgnore(head, s) ->
+            let pspan = s.Span
+            let mutable looping = true
+            let mutable currPos = 0
+            let textLength = s.Length
+
+            while looping do
+                match tspan.Slice(currPos).IndexOfAny(head) with
+                | -1 -> looping <- false
+                | n when
+                    tspan
+                        .Slice(currPos + n)
+                        .StartsWith(pspan, StringComparison.OrdinalIgnoreCase)
+                    ->
+                    count <- count + 1
+                    currPos <- currPos + n + textLength
+                | n -> currPos <- currPos + n + 1
+
+        count
+
+
     /// see: `LengthLookup`
     [<MethodImpl(MethodImplOptions.NoInlining)>]
     member this.llmatch_ends_skip
@@ -1403,6 +1459,181 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
                 matches.Add(ValueMatch(currStart, len))
 
 
+    /// Count matches from the already-collected candidate starts.
+    /// These methods intentionally mirror llmatch_ends_* so non-overlap and
+    /// POSIX end-selection semantics remain unchanged; only the output sink differs.
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.llcount_ends_skip
+        (acc: byref<ValueList<int>>, input: ReadOnlySpan<char>)
+        : int =
+        let mutable count = 0
+        let mutable nextValidStart = 0
+        let startSpans = ValueList.toSpan acc
+        let mutable pos = 0
+        let mt_log = _mintermsLog
+
+        let struct (offset, startState) =
+            match utf16Optimizations.LengthLookup with
+            | LengthLookup.FixedLengthPrefixMatchEnd(fl, stateId) ->
+                pos <- pos + fl
+                struct (fl, stateId)
+            | _ -> struct (0, DFA_R_NOPR)
+
+        let mutable i = startSpans.Length
+
+        while i <> 0 do
+            i <- i - 1
+            let currStart = startSpans[i]
+
+            if currStart >= nextValidStart then
+                pos <- currStart + offset
+                let matchEnd = this.end_lazy (mt_log, pos, input, startState)
+                assert (matchEnd <> -2)
+                count <- count + 1
+                nextValidStart <- matchEnd
+
+        count
+
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.llcount_ends_noskip
+        (acc: byref<ValueList<int>>, input: ReadOnlySpan<char>)
+        : int =
+        let mutable count = 0
+        let startSpans = ValueList.toSpan acc
+        let mutable pos = 0
+        let mutable l_dfaDelta = _dfaDelta
+        let mutable l_nullKindArray = _nullKindArray
+        let mt_log = _mintermsLog
+
+        let struct (offset, startState) =
+            match utf16Optimizations.LengthLookup with
+            | LengthLookup.FixedLengthPrefixMatchEnd(fl, stateId) -> struct (fl, stateId)
+            | _ -> struct (0, DFA_R_NOPR)
+
+        let mutable i = startSpans.Length
+
+        while i <> 0 do
+            i <- i - 1
+            let currStart = startSpans[i]
+
+            if currStart >= pos then
+                pos <- currStart + offset
+                let mutable state = startState
+
+                let matchEnd =
+                    I.endNoSkip
+                        (fun currentMax l_pos currentStateId ->
+                            this.HandleInputEndFwd(currentMax, l_pos, currentStateId)
+                        )
+                        (fun currentMax l_pos currentStateId ->
+                            this.set_null_fwd_fallback (currentMax, l_pos, currentStateId)
+                        )
+                        (fun state char ->
+                            let nextState = this.rev_deriv (state, char)
+                            l_dfaDelta <- _dfaDelta
+                            l_nullKindArray <- _nullKindArray
+                            nextState
+                        )
+                        &l_dfaDelta
+                        &l_nullKindArray
+                        _mtlookup
+                        mt_log
+                        input
+                        state
+                        pos
+
+                assert (matchEnd <> -2)
+                count <- count + 1
+                pos <- matchEnd
+
+        count
+
+    member this.llcount_ends_remaining_set
+        (
+            acc: byref<ValueList<int>>,
+            input: ReadOnlySpan<char>,
+            prefixlen: int,
+            mtId: TMinterm,
+            remaining: byte
+        ) : int =
+        let mutable count = 0
+        let startSpans = ValueList.toSpan acc
+        let mutable i = startSpans.Length
+        let longest = input.Length - prefixlen
+        let mutable l_pos = 0
+        let mutable counter = 0uy
+        let l_mtid = mtId
+
+        while i <> 0 do
+            i <- i - 1
+
+            if startSpans[i] >= l_pos then
+                let currStart = startSpans[i]
+
+                if I.clt_un (longest - currStart) remaining then
+                    counter <- byte (longest - currStart)
+                else
+                    counter <- remaining
+
+                l_pos <- I.add (currStart + prefixlen) counter
+
+                while (counter <> 0uy
+                       && I.mintermId _mtlookup input (I.sub l_pos counter) = l_mtid) do
+                    counter <- I.sub counter 1uy
+
+                l_pos <- I.sub l_pos counter
+                count <- count + 1
+
+        count
+
+    member this.llcount_ends_setlookup_mt
+        (
+            acc: byref<ValueList<int>>,
+            input: ReadOnlySpan<char>,
+            prefixlen: int,
+            mtId: TMinterm,
+            nk: NullKind
+        ) : int =
+        assert (nk <> NullKind.PendingNull)
+        let mutable count = 0
+        let startSpans = ValueList.toSpan acc
+        let mutable i = acc.size
+        let mutable l_pos = 0
+
+        while i <> 0 do
+            i <- i - 1
+
+            if startSpans[i] >= l_pos then
+                let currStart = startSpans[i]
+                l_pos <- currStart + prefixlen
+
+                while (l_pos < input.Length && I.mintermId _mtlookup input l_pos <> mtId) do
+                    l_pos <- l_pos + 1
+
+                l_pos <- (I.sub l_pos nk) + 1
+                count <- count + 1
+
+        count
+
+    member this.llcount_ends_fixlen
+        (acc: byref<ValueList<int>>, len: int)
+        : int =
+        let mutable count = 0
+        let startSpans = ValueList.toSpan acc
+        let mutable i = startSpans.Length
+        let mutable l_pos = 0
+
+        while i <> 0 do
+            i <- i - 1
+
+            if startSpans[i] >= l_pos then
+                let currStart = startSpans[i]
+                l_pos <- currStart + len
+                count <- count + 1
+
+        count
+
+
     [<MethodImpl(MethodImplOptions.NoInlining)>]
     member this.llmatch_collect
         (
@@ -1454,6 +1685,36 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
 
     [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.llcount_ends
+        (acc: byref<ValueList<int>>, input: ReadOnlySpan<char>)
+        : int =
+        match utf16Optimizations.LengthLookup with
+        | LengthLookup.SetLookup(prefixLength, mtId, skipKind, nullKind, _) when
+            skipKind = SkipKind.NotSkip && nullKind <> NullKind.PendingNull
+            ->
+            this.llcount_ends_setlookup_mt (
+                &acc,
+                input,
+                prefixLength,
+                mtId,
+                nullKind
+            )
+        | LengthLookup.RemainingSets(prefixLength, mtId, remaining) ->
+            this.llcount_ends_remaining_set (
+                &acc,
+                input,
+                prefixLength,
+                mtId,
+                remaining
+            )
+        | LengthLookup.FixedLength(n) -> this.llcount_ends_fixlen (&acc, n)
+        | _ ->
+            match skippables with
+            | 0 -> this.llcount_ends_noskip (&acc, input)
+            | _ -> this.llcount_ends_skip (&acc, input)
+
+
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
     member this.llmatch_all(input: ReadOnlySpan<char>) : ValueList<ValueMatch> =
         if input.Length = 0 then
             this.HandleZeroLengthString()
@@ -1477,9 +1738,33 @@ type internal RegexMatcher<'t when 't: struct and TSet<'t> and 't: equality>
 
 
     [<MethodImpl(MethodImplOptions.NoInlining)>]
-    member this.llmatch_count(input: ReadOnlySpan<char>) : int =
+    member this.llmatch_count_materialized(input: ReadOnlySpan<char>) : int =
         use results = this.llmatch_all input
         results.size
+
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.llmatch_count_direct(input: ReadOnlySpan<char>) : int =
+        if input.Length = 0 then
+            if StateFlags.canBeNullable _flagsArray[DFA_TR_REV] then 1 else 0
+        else
+            match utf16Optimizations.MatchOverride with
+            | ValueSome regOverride -> this.llmatch_count_override (input, regOverride)
+            | _ ->
+                use mutable acc = new ValueList<int>(16)
+                let mutable initState = DFA_TR_REV
+
+                let startPosition =
+                    this.HandleInputEnd(_flagsArray[initState], &initState, input, &acc)
+
+                this.llmatch_collect (input, &acc, initState, startPosition)
+                this.llcount_ends (&acc, input)
+
+    [<MethodImpl(MethodImplOptions.NoInlining)>]
+    member this.llmatch_count(input: ReadOnlySpan<char>) : int =
+        if options.UseDirectCount then
+            this.llmatch_count_direct input
+        else
+            this.llmatch_count_materialized input
 
     /// return just the positions of matches without allocating the result
     override this.ValueMatches(input: ReadOnlySpan<char>) : ValueList<ValueMatch> =
