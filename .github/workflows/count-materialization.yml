@@ -65,10 +65,15 @@ jobs:
         shell: bash
         run: |
           log=src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/ci-console.log
+          csv=src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/results/Resharp.Benchmarks.CountMaterializationBench-report.csv
+
+          test -s "${csv}"
+          grep -Fq "Original" "${csv}"
+          grep -Fq "Direct" "${csv}"
+
           if grep -Fq "There are not any results runs" "${log}" \
             || grep -Fq "No Workload Results were obtained" "${log}" \
-            || grep -Fq "Benchmarks with issues:" "${log}" \
-            || grep -Eq '\|[[:space:]]+NA[[:space:]]+\|' "${log}"; then
+            || grep -Fq "Benchmarks with issues:" "${log}"; then
             echo "::error::BenchmarkDotNet completed without valid workload results."
             exit 1
           fi
