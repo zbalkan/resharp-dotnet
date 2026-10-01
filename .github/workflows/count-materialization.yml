@@ -6,6 +6,9 @@ on:
       - perf/count-without-materialization
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: count-materialization-${{ github.ref }}
   cancel-in-progress: true
@@ -15,32 +18,66 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
-    steps:
-      - uses: actions/checkout@v4
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
 
-      - uses: actions/setup-dotnet@v4
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up .NET 10.0.102
+        uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: "10.0.102"
+
+      - name: Pin benchmark SDK
+        shell: bash
+        run: |
+          cat > global.json <<'EOF'
+          {
+            "sdk": {
+              "version": "10.0.102",
+              "rollForward": "disable"
+            }
+          }
+          EOF
+          test "$(dotnet --version)" = "10.0.102"
+
+      - name: Restore
+        run: dotnet restore src/Resharp.Benchmarks/Resharp.Benchmarks.csproj
 
       - name: Test
         run: dotnet test src/Resharp.Test/Resharp.Test.fsproj -c Release -f net10.0
 
       - name: Build benchmarks
-        run: dotnet build src/Resharp.Benchmarks/Resharp.Benchmarks.csproj -c Release -f net10.0
+        run: dotnet build src/Resharp.Benchmarks/Resharp.Benchmarks.csproj -c Release -f net10.0 --no-restore
 
       - name: Benchmark original vs direct Count
+        working-directory: src/Resharp.Benchmarks
+        shell: bash
         run: |
-          dotnet run --project src/Resharp.Benchmarks/Resharp.Benchmarks.csproj \
-            -c Release -f net10.0 --no-build -- --count-materialization \
-            2>&1 | tee count-materialization.log
+          mkdir -p BenchmarkDotNet.Artifacts
+          set -o pipefail
+          dotnet run -c Release -f net10.0 --no-build -- --count-materialization \
+            2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+
+      - name: Validate benchmark results
+        shell: bash
+        run: |
+          log=src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/ci-console.log
+          if grep -Fq "There are not any results runs" "${log}" \
+            || grep -Fq "No Workload Results were obtained" "${log}" \
+            || grep -Fq "Benchmarks with issues:" "${log}" \
+            || grep -Eq '\|[[:space:]]+NA[[:space:]]+\|' "${log}"; then
+            echo "::error::BenchmarkDotNet completed without valid workload results."
+            exit 1
+          fi
 
       - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: count-materialization-${{ github.run_id }}-${{ github.sha }}
-          path: |
-            BenchmarkDotNet.Artifacts/**
-            count-materialization.log
+          path: src/Resharp.Benchmarks/BenchmarkDotNet.Artifacts/**
           if-no-files-found: warn
           retention-days: 30
