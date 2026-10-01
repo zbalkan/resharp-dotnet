@@ -1,6 +1,7 @@
 [<Xunit.Collection("Sequential")>]
 module Resharp.Test._19_CountTests
 
+open System
 open Resharp
 open Xunit
 
@@ -9,15 +10,15 @@ let private makeRegex pattern direct =
     options.UseDirectCount <- direct
     Regex(pattern, options)
 
-let private assertCountEquivalent pattern input =
+let private assertCountEquivalent (pattern: string) (input: string) =
     let direct = makeRegex pattern true
     let materialized = makeRegex pattern false
 
-    use matches = direct.ValueMatches(input)
+    use matches = direct.ValueMatches(input.AsSpan())
     let expected = matches.Count
 
-    Assert.Equal(expected, materialized.Count(input))
-    Assert.Equal(expected, direct.Count(input))
+    Assert.Equal(expected, materialized.Count(input.AsSpan()))
+    Assert.Equal(expected, direct.Count(input.AsSpan()))
 
 [<Theory>]
 [<InlineData("foo", "foo foofoo x foo")>]
@@ -30,7 +31,7 @@ let private assertCountEquivalent pattern input =
 [<InlineData("(?<=x)a+", "xaa xxaaa ya")>]
 [<InlineData("foo", "")>]
 [<InlineData("a*", "")>]
-let direct_count_matches_materialized_semantics pattern input =
+let direct_count_matches_materialized_semantics (pattern: string) (input: string) =
     assertCountEquivalent pattern input
 
 [<Fact>]
@@ -48,4 +49,4 @@ let direct_count_remains_equivalent_after_lazy_dfa_growth () =
 
     for _ = 1 to 4 do
         for input in inputs do
-            Assert.Equal(materialized.Count(input), direct.Count(input))
+            Assert.Equal(materialized.Count(input.AsSpan()), direct.Count(input.AsSpan()))
