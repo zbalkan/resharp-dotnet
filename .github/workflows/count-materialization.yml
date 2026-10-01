@@ -1,0 +1,46 @@
+name: Count materialization experiment
+
+on:
+  push:
+    branches:
+      - perf/count-without-materialization
+  workflow_dispatch:
+
+concurrency:
+  group: count-materialization-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test
+        run: dotnet test src/Resharp.Test/Resharp.Test.fsproj -c Release -f net10.0
+
+      - name: Build benchmarks
+        run: dotnet build src/Resharp.Benchmarks/Resharp.Benchmarks.csproj -c Release -f net10.0
+
+      - name: Benchmark original vs direct Count
+        run: |
+          dotnet run --project src/Resharp.Benchmarks/Resharp.Benchmarks.csproj \
+            -c Release -f net10.0 --no-build -- --count-materialization \
+            2>&1 | tee count-materialization.log
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-materialization-${{ github.run_id }}-${{ github.sha }}
+          path: |
+            BenchmarkDotNet.Artifacts/**
+            count-materialization.log
+          if-no-files-found: warn
+          retention-days: 30
