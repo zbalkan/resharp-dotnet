@@ -22,6 +22,10 @@ if (args is ["--readme"])
 #endif
     BenchmarkRunner.Run<RebarBench>();
 }
+else if (args is ["--count-materialization"])
+{
+    BenchmarkRunner.Run<CountMaterializationBench>();
+}
 else if (args.Length == 0)
 {
     RebarData.NameFilter = ShowMenu();
