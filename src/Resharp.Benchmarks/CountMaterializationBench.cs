@@ -4,7 +4,7 @@ using BenchmarkDotNet.Jobs;
 
 namespace Resharp.Benchmarks;
 
-[SimpleJob(launchCount: 3, warmupCount: 8, iterationCount: 12)]
+[SimpleJob(launchCount: 5, warmupCount: 12, iterationCount: 20)]
 [MemoryDiagnoser]
 [Config(typeof(BenchConfig))]
 [GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory)]
