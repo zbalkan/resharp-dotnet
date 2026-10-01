@@ -71,6 +71,8 @@ jobs:
           set -o pipefail
           dotnet run --configuration Release --framework net10.0 --no-build -- --adaptive-dfa \
             2>&1 | tee BenchmarkDotNet.Artifacts/ci-console.log
+          dotnet run --configuration Release --framework net10.0 --no-build -- --adaptive-dfa-rebar \
+            2>&1 | tee -a BenchmarkDotNet.Artifacts/ci-console.log
           dotnet run --configuration Release --framework net10.0 --no-build -- --readme \
             2>&1 | tee -a BenchmarkDotNet.Artifacts/ci-console.log
 
