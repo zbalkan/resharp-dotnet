@@ -26,6 +26,13 @@ else if (args is ["--adaptive-dfa"])
 {
     BenchmarkRunner.Run<AdaptiveDfaBench>();
 }
+else if (args is ["--adaptive-dfa-rebar"])
+{
+#if SOURCE_GEN
+    RebarData.NameSet = SourceGenRegexes.Lookup.Keys.ToHashSet();
+#endif
+    BenchmarkRunner.Run<AdaptiveDfaRebarBench>();
+}
 else if (args.Length == 0)
 {
     RebarData.NameFilter = ShowMenu();
