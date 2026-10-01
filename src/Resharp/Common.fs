@@ -39,6 +39,10 @@ type ResharpOptions() =
     /// default:100, Full dfa compilation state space threshold
     member val DfaThreshold = 100 with get, set
 
+    /// Internal benchmark switch. Count() normally uses a count-only terminal pass
+    /// instead of materializing ValueMatch entries that the caller never observes.
+    member val internal UseDirectCount = true with get, set
+
     /// Attempt more expensive optimizations for high-throughput
     static member HighThroughputDefaults =
         ResharpOptions(
