@@ -27,7 +27,7 @@ let private assertCountEquivalent (pattern: string) (input: string) =
 [<InlineData("\\b[0-9A-Za-z_]+\\b", "one two three_4 five")>]
 [<InlineData("a+", "baaa ca aaaaa")>]
 [<InlineData("a*", "bbb")>]
-[<InlineData("^a|b$", "a middle b")>]
+[<InlineData("^a.*b$", "a middle b")>]
 [<InlineData("(?<=x)a+", "xaa xxaaa ya")>]
 [<InlineData("foo", "")>]
 [<InlineData("a*", "")>]
